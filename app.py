@@ -311,14 +311,9 @@ if page == "Teacher: Create Quiz":
     st.write("Upload a CSV or Excel file with 10 to 15 multiple-choice questions and paste a YouTube link.")
 
     with st.expander("CSV format", expanded=True):
-        st.code(
-            "question,option_a,option_b,option_c,option_d,correct_answer
-"
-            "What is the main idea?,A,B,C,D,B
-"
-            "What colour is the car?,Red,Blue,Green,Black,A",
-            language="csv",
-        )
+        st.code("question,option_a,option_b,option_c,option_d,correct_answer
+What is the main idea?,A,B,C,D,B
+What colour is the car?,Red,Blue,Green,Black,A", language="csv")
         st.download_button(
             "Download sample CSV",
             data=build_sample_csv(),
