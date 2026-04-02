@@ -1,6 +1,6 @@
 import os
-import json
 import uuid
+import random
 from datetime import datetime
 from io import BytesIO
 
@@ -8,10 +8,6 @@ import pandas as pd
 import streamlit as st
 
 # Optional Google Sheets support
-# To enable this on Streamlit Community Cloud:
-# 1. Add gspread and google-auth to requirements.txt
-# 2. Put your service account JSON in st.secrets as GOOGLE_SERVICE_ACCOUNT
-# 3. Put sheet names / IDs in st.secrets if needed
 try:
     import gspread
     from google.oauth2.service_account import Credentials
@@ -20,9 +16,6 @@ except Exception:
     GSHEETS_AVAILABLE = False
 
 
-# -----------------------------
-# CONFIG
-# -----------------------------
 st.set_page_config(page_title="Video Quiz Generator", page_icon="🎥", layout="wide")
 
 LOCAL_QUIZ_FILE = "quizzes.csv"
@@ -64,20 +57,18 @@ ANSWER_COLUMNS = [
 ]
 
 
-# -----------------------------
-# HELPERS
-# -----------------------------
 def ensure_local_files():
-    for filename, cols in [
+    files_and_columns = [
         (LOCAL_QUIZ_FILE, QUIZ_COLUMNS),
         (LOCAL_SUBMISSION_FILE, SUBMISSION_COLUMNS),
         (LOCAL_ANSWER_FILE, ANSWER_COLUMNS),
-    ]:
+    ]
+    for filename, columns in files_and_columns:
         if not os.path.exists(filename):
-            pd.DataFrame(columns=cols).to_csv(filename, index=False)
+            pd.DataFrame(columns=columns).to_csv(filename, index=False)
 
 
-def load_csv(filename: str, columns: list[str]) -> pd.DataFrame:
+def load_csv(filename, columns):
     if os.path.exists(filename):
         df = pd.read_csv(filename)
         for col in columns:
@@ -87,18 +78,20 @@ def load_csv(filename: str, columns: list[str]) -> pd.DataFrame:
     return pd.DataFrame(columns=columns)
 
 
-def save_csv(df: pd.DataFrame, filename: str):
+def save_csv(df, filename):
     df.to_csv(filename, index=False)
 
 
-def normalize_correct_answer(value: str) -> str:
+def normalize_correct_answer(value):
     if pd.isna(value):
         return ""
     value = str(value).strip().upper()
-    return value if value in {"A", "B", "C", "D"} else ""
+    if value in ["A", "B", "C", "D"]:
+        return value
+    return ""
 
 
-def validate_question_df(df: pd.DataFrame) -> tuple[bool, str, pd.DataFrame]:
+def validate_question_df(df):
     required = [
         "question",
         "option_a",
@@ -122,39 +115,13 @@ def validate_question_df(df: pd.DataFrame) -> tuple[bool, str, pd.DataFrame]:
     if len(cleaned) < 10 or len(cleaned) > 15:
         return False, "Please upload between 10 and 15 questions.", cleaned
 
-    invalid_correct = cleaned[cleaned["correct_answer"] == ""]
-    if not invalid_correct.empty:
-        return False, "Each correct_answer must be A, B, C, or D.", cleaned
-
-    blank_questions = cleaned[cleaned["question"].astype(str).str.strip() == ""]
-    if not blank_questions.empty:
+    if (cleaned["question"].astype(str).str.strip() == "").any():
         return False, "Some questions are blank.", cleaned
 
+    if (cleaned["correct_answer"] == "").any():
+        return False, "Each correct_answer must be A, B, C, or D.", cleaned
+
     return True, "OK", cleaned
-
-
-def extract_youtube_id(url: str) -> str | None:
-    if not url:
-        return None
-    url = url.strip()
-    patterns = [
-        "watch?v=",
-        "youtu.be/",
-        "shorts/",
-        "embed/",
-    ]
-    for pattern in patterns:
-        if pattern in url:
-            part = url.split(pattern, 1)[1]
-            return part.split("&")[0].split("?")[0].split("/")[0]
-    return None
-
-
-def get_embed_url(url: str) -> str:
-    vid = extract_youtube_id(url)
-    if vid:
-        return f"https://www.youtube.com/embed/{vid}"
-    return url
 
 
 def get_google_sheets_client():
@@ -167,62 +134,59 @@ def get_google_sheets_client():
         "https://www.googleapis.com/auth/spreadsheets",
         "https://www.googleapis.com/auth/drive",
     ]
-
     creds_dict = dict(st.secrets["GOOGLE_SERVICE_ACCOUNT"])
     creds = Credentials.from_service_account_info(creds_dict, scopes=scopes)
     return gspread.authorize(creds)
 
 
-def append_to_gsheet(worksheet_name: str, row_values: list):
+def append_to_gsheet(worksheet_name, row_values):
     client = get_google_sheets_client()
     if client is None:
-        return False, "Google Sheets is not configured. Saved locally only."
+        return
 
-    sheet_id = st.secrets.get("GOOGLE_SHEET_ID", None)
+    sheet_id = st.secrets.get("GOOGLE_SHEET_ID")
     if not sheet_id:
-        return False, "GOOGLE_SHEET_ID is missing from secrets. Saved locally only."
+        return
 
     try:
         sh = client.open_by_key(sheet_id)
         ws = sh.worksheet(worksheet_name)
         ws.append_row(row_values)
-        return True, "Saved to Google Sheets."
-    except Exception as e:
-        return False, f"Google Sheets save failed: {e}"
+    except Exception:
+        pass
 
 
-def append_dataframe_rows_to_gsheet(worksheet_name: str, df: pd.DataFrame):
+def append_dataframe_rows_to_gsheet(worksheet_name, df):
     client = get_google_sheets_client()
     if client is None:
-        return False, "Google Sheets is not configured. Saved locally only."
+        return
 
-    sheet_id = st.secrets.get("GOOGLE_SHEET_ID", None)
+    sheet_id = st.secrets.get("GOOGLE_SHEET_ID")
     if not sheet_id:
-        return False, "GOOGLE_SHEET_ID is missing from secrets. Saved locally only."
+        return
 
     try:
         sh = client.open_by_key(sheet_id)
         ws = sh.worksheet(worksheet_name)
         for _, row in df.iterrows():
             ws.append_row(row.fillna("").tolist())
-        return True, "Saved to Google Sheets."
-    except Exception as e:
-        return False, f"Google Sheets save failed: {e}"
+    except Exception:
+        pass
 
 
-def load_all_quizzes() -> pd.DataFrame:
+def load_all_quizzes():
     return load_csv(LOCAL_QUIZ_FILE, QUIZ_COLUMNS)
 
 
-def load_all_submissions() -> pd.DataFrame:
+def load_all_submissions():
     return load_csv(LOCAL_SUBMISSION_FILE, SUBMISSION_COLUMNS)
 
 
-def load_all_answers() -> pd.DataFrame:
+def load_all_answers():
     return load_csv(LOCAL_ANSWER_FILE, ANSWER_COLUMNS)
 
 
-def get_quiz_list() -> pd.DataFrame:
+def get_quiz_list():
     quizzes = load_all_quizzes()
     if quizzes.empty:
         return pd.DataFrame(columns=["quiz_id", "quiz_title", "youtube_url", "created_at"])
@@ -232,18 +196,20 @@ def get_quiz_list() -> pd.DataFrame:
     return deduped
 
 
-def get_quiz_questions(quiz_id: str) -> pd.DataFrame:
+def get_quiz_questions(quiz_id):
     quizzes = load_all_quizzes()
     if quizzes.empty:
         return quizzes
+
     quiz_df = quizzes[quizzes["quiz_id"] == quiz_id].copy()
     if quiz_df.empty:
         return quiz_df
+
     quiz_df["question_no"] = pd.to_numeric(quiz_df["question_no"], errors="coerce")
     return quiz_df.sort_values("question_no")
 
 
-def save_new_quiz(quiz_title: str, youtube_url: str, questions_df: pd.DataFrame) -> str:
+def save_new_quiz(quiz_title, youtube_url, questions_df):
     quiz_id = str(uuid.uuid4())[:8]
     created_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
@@ -258,20 +224,12 @@ def save_new_quiz(quiz_title: str, youtube_url: str, questions_df: pd.DataFrame)
     all_quizzes = load_all_quizzes()
     all_quizzes = pd.concat([all_quizzes, prepared], ignore_index=True)
     save_csv(all_quizzes, LOCAL_QUIZ_FILE)
-
     append_dataframe_rows_to_gsheet("quizzes", prepared)
+
     return quiz_id
 
 
-def save_submission(
-    quiz_id: str,
-    quiz_title: str,
-    student_name: str,
-    student_class: str,
-    score: int,
-    total_questions: int,
-    answer_records: list[dict],
-):
+def save_submission(quiz_id, quiz_title, student_name, student_class, score, total_questions, answer_records):
     submission_id = str(uuid.uuid4())[:12]
     submitted_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
@@ -296,24 +254,25 @@ def save_submission(
     answers = pd.concat([answers, answers_df], ignore_index=True)
     save_csv(answers, LOCAL_ANSWER_FILE)
 
-    append_to_gsheet("submissions", [
-        submission_id,
-        quiz_id,
-        quiz_title,
-        student_name,
-        student_class,
-        score,
-        total_questions,
-        submitted_at,
-    ])
+    append_to_gsheet(
+        "submissions",
+        [
+            submission_id,
+            quiz_id,
+            quiz_title,
+            student_name,
+            student_class,
+            score,
+            total_questions,
+            submitted_at,
+        ],
+    )
 
     for _, row in answers_df.iterrows():
         append_to_gsheet("answers", row.fillna("").tolist())
 
-    return submission_id
 
-
-def build_sample_csv() -> bytes:
+def build_sample_csv():
     sample = pd.DataFrame([
         {
             "question": "What is the main idea of the video?",
@@ -337,9 +296,6 @@ def build_sample_csv() -> bytes:
     return buffer.getvalue()
 
 
-# -----------------------------
-# UI
-# -----------------------------
 ensure_local_files()
 
 st.title("🎥 Video Quiz Generator")
@@ -350,15 +306,16 @@ page = st.sidebar.radio(
     ["Student Quiz", "Teacher: Create Quiz", "Teacher: Results", "Setup Guide"],
 )
 
-
 if page == "Teacher: Create Quiz":
     st.header("Create a New Quiz")
-    st.write("Upload a CSV file with 10 to 15 multiple-choice questions and paste a YouTube link.")
+    st.write("Upload a CSV or Excel file with 10 to 15 multiple-choice questions and paste a YouTube link.")
 
     with st.expander("CSV format", expanded=True):
         st.code(
-            "question,option_a,option_b,option_c,option_d,correct_answer\n"
-            "What is the main idea?,A,B,C,D,B\n"
+            "question,option_a,option_b,option_c,option_d,correct_answer
+"
+            "What is the main idea?,A,B,C,D,B
+"
             "What colour is the car?,Red,Blue,Green,Black,A",
             language="csv",
         )
@@ -374,6 +331,7 @@ if page == "Teacher: Create Quiz":
     uploaded_file = st.file_uploader("Upload CSV or Excel file", type=["csv", "xlsx"])
 
     preview_df = None
+
     if uploaded_file is not None:
         try:
             if uploaded_file.name.lower().endswith(".csv"):
@@ -406,11 +364,11 @@ if page == "Teacher: Create Quiz":
             quiz_id = save_new_quiz(quiz_title.strip(), youtube_url.strip(), preview_df)
             st.success(f"Quiz saved successfully. Quiz ID: {quiz_id}")
 
-
 elif page == "Student Quiz":
     st.header("Take a Quiz")
 
     quiz_list = get_quiz_list()
+
     if quiz_list.empty:
         st.info("No quizzes have been created yet.")
     else:
@@ -430,9 +388,11 @@ elif page == "Student Quiz":
             youtube_url = quiz_df.iloc[0]["youtube_url"]
 
             col1, col2 = st.columns([2, 1])
+
             with col1:
                 st.subheader(quiz_title)
                 st.video(youtube_url)
+
             with col2:
                 student_name = st.text_input("Your name")
                 student_class = st.text_input("Class")
@@ -442,38 +402,21 @@ elif page == "Student Quiz":
 
             with st.form(key=f"quiz_form_{selected_quiz_id}"):
                 student_answers = {}
+
                 for _, row in quiz_df.iterrows():
                     q_no = int(row["question_no"])
                     st.write(f"**{q_no}. {row['question']}**")
-                    import random
 
-options = [
-    ("A", row["option_a"]),
-    ("B", row["option_b"]),
-    ("C", row["option_c"]),
-    ("D", row["option_d"]),
-]
+                    options = [
+                        ("A", row["option_a"]),
+                        ("B", row["option_b"]),
+                        ("C", row["option_c"]),
+                        ("D", row["option_d"]),
+                    ]
 
-random.shuffle(options)
+                    random.shuffle(options)
+                    labels = [f"{k}. {v}" for k, v in options]
 
-labels = [f"{k}. {v}" for k, v in options]
-
-selected = st.radio(
-    f"Question {q_no}",
-    labels,
-    index=None,
-    key=f"q_{selected_quiz_id}_{q_no}",
-    label_visibility="collapsed",
-)
-
-if selected:
-    chosen_letter = selected[0]
-
-    # find original answer
-    for original_letter, text in options:
-        if original_letter == chosen_letter:
-            student_answers[q_no] = chosen_letter
-                    labels = [f"{k}. {v}" for k, v in options_map.items()]
                     selected = st.radio(
                         f"Question {q_no}",
                         labels,
@@ -481,8 +424,10 @@ if selected:
                         key=f"q_{selected_quiz_id}_{q_no}",
                         label_visibility="collapsed",
                     )
+
                     if selected:
                         student_answers[q_no] = selected[0]
+
                     st.write("")
 
                 submitted = st.form_submit_button("Submit quiz", type="primary")
@@ -501,15 +446,19 @@ if selected:
                         correct = str(row["correct_answer"]).strip().upper()
                         student_answer = student_answers.get(q_no, "")
                         is_correct = student_answer == correct
+
                         if is_correct:
                             score += 1
-                        answer_records.append({
-                            "quiz_id": selected_quiz_id,
-                            "question_no": q_no,
-                            "student_answer": student_answer,
-                            "correct_answer": correct,
-                            "is_correct": is_correct,
-                        })
+
+                        answer_records.append(
+                            {
+                                "quiz_id": selected_quiz_id,
+                                "question_no": q_no,
+                                "student_answer": student_answer,
+                                "correct_answer": correct,
+                                "is_correct": is_correct,
+                            }
+                        )
 
                     save_submission(
                         quiz_id=selected_quiz_id,
@@ -534,7 +483,6 @@ if selected:
                             st.write("✅ Correct" if student_answer == correct else "❌ Incorrect")
                             st.write("---")
 
-
 elif page == "Teacher: Results":
     st.header("Results")
 
@@ -545,12 +493,16 @@ elif page == "Teacher: Results":
     if submissions.empty:
         st.info("No submissions yet.")
     else:
-        filter_quiz = st.selectbox("Filter by quiz", ["All"] + quiz_list["quiz_title"].drop_duplicates().tolist())
+        quiz_titles = ["All"] + quiz_list["quiz_title"].drop_duplicates().tolist()
+        filter_quiz = st.selectbox("Filter by quiz", quiz_titles)
+
         filtered = submissions.copy()
         if filter_quiz != "All":
             filtered = filtered[filtered["quiz_title"] == filter_quiz]
 
-        filtered["percent"] = (pd.to_numeric(filtered["score"], errors="coerce") / pd.to_numeric(filtered["total_questions"], errors="coerce") * 100).round(1)
+        filtered["score"] = pd.to_numeric(filtered["score"], errors="coerce")
+        filtered["total_questions"] = pd.to_numeric(filtered["total_questions"], errors="coerce")
+        filtered["percent"] = (filtered["score"] / filtered["total_questions"] * 100).round(1)
 
         c1, c2, c3 = st.columns(3)
         with c1:
@@ -573,7 +525,11 @@ elif page == "Teacher: Results":
 
         if not answers.empty:
             st.subheader("Question analysis")
-            quiz_title_to_id = {row["quiz_title"]: row["quiz_id"] for _, row in quiz_list.iterrows()}
+
+            quiz_title_to_id = {
+                row["quiz_title"]: row["quiz_id"] for _, row in quiz_list.iterrows()
+            }
+
             if filter_quiz != "All" and filter_quiz in quiz_title_to_id:
                 chosen_id = quiz_title_to_id[filter_quiz]
                 answer_filtered = answers[answers["quiz_id"] == chosen_id].copy()
@@ -588,7 +544,6 @@ elif page == "Teacher: Results":
                 ).reset_index()
                 summary["correct_rate"] = (summary["correct_rate"] * 100).round(1)
                 st.dataframe(summary, use_container_width=True)
-
 
 else:
     st.header("Setup Guide")
