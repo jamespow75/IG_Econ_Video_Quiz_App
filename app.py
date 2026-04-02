@@ -311,18 +311,18 @@ if page == "Teacher: Create Quiz":
     st.write("Upload a CSV or Excel file with 10 to 15 multiple-choice questions and paste a YouTube link.")
 
     with st.expander("CSV format", expanded=True):
-    st.code(
-        "question,option_a,option_b,option_c,option_d,correct_answer\n"
-        "What is the main idea?,A,B,C,D,B\n"
-        "What colour is the car?,Red,Blue,Green,Black,A",
-        language="csv",
-    )
-    st.download_button(
-        "Download sample CSV",
-        data=build_sample_csv(),
-        file_name="sample_quiz_questions.csv",
-        mime="text/csv",
-    )
+        st.code(
+            "question,option_a,option_b,option_c,option_d,correct_answer\n"
+            "What is the main idea?,A,B,C,D,B\n"
+            "What colour is the car?,Red,Blue,Green,Black,A",
+            language="csv",
+        )
+        st.download_button(
+            "Download sample CSV",
+            data=build_sample_csv(),
+            file_name="sample_quiz_questions.csv",
+            mime="text/csv",
+        )
     quiz_title = st.text_input("Quiz title", placeholder="e.g. Climate Change Video Quiz")
     youtube_url = st.text_input("YouTube URL", placeholder="Paste a YouTube link here")
     uploaded_file = st.file_uploader("Upload CSV or Excel file", type=["csv", "xlsx"])
