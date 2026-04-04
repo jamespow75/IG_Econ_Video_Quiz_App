@@ -71,19 +71,22 @@ def save_question_analytics(quiz_title, email, role, q_num, question, selected, 
 def convert_sheet_url(url):
     url = str(url).strip()
 
+    # If already correct
     if "export?format=csv" in url:
         return url
 
-    match = re.search(r"/spreadsheets/d/([a-zA-Z0-9-_]+)", url)
-    if not match:
+    # Extract sheet ID
+    if "/d/" in url:
+        sheet_id = url.split("/d/")[1].split("/")[0]
+    else:
         raise ValueError("Invalid Google Sheets URL")
 
-    sheet_id = match.group(1)
-    gid_match = re.search(r"gid=([0-9]+)", url)
-    gid = gid_match.group(1) if gid_match else "0"
+    # Extract gid if present
+    gid = "0"
+    if "gid=" in url:
+        gid = url.split("gid=")[1].split("&")[0]
 
     return f"https://docs.google.com/spreadsheets/d/{sheet_id}/export?format=csv&gid={gid}"
-
 
 @st.cache_data(show_spinner=False)
 def load_google_sheet(sheet_url):
