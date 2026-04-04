@@ -1,26 +1,89 @@
-import os
 import re
 import random
 from datetime import datetime
 
+import gspread
 import pandas as pd
 import streamlit as st
+from google.oauth2.service_account import Credentials
 
 st.set_page_config(page_title="IG Econ Video Quizzes", layout="wide")
-
-RESULTS_FILE = "results.csv"
-ANALYTICS_FILE = "question_analytics.csv"
 
 # -----------------------------------
 # CONFIG
 # -----------------------------------
-# Put your own email here if you want teacher dashboard access
 ADMIN_EMAILS = {
     "james.p@sisbschool.com",
 }
 
-# Paste your quiz catalogue Google Sheet URL here
 QUIZ_CATALOGUE_URL = "https://docs.google.com/spreadsheets/d/1M6QJOgDr5BYtsxpxLA-u1_RYRCugzlINQOUrVsTin-o/edit?usp=sharing"
+
+
+# -----------------------------------
+# GOOGLE SHEETS RESULTS CONNECTION
+# -----------------------------------
+@st.cache_resource
+def get_gspread_client():
+    scopes = [
+        "https://www.googleapis.com/auth/spreadsheets",
+        "https://www.googleapis.com/auth/drive",
+    ]
+    creds = Credentials.from_service_account_info(
+        st.secrets["gcp_service_account"],
+        scopes=scopes,
+    )
+    return gspread.authorize(creds)
+
+
+@st.cache_resource
+def get_results_workbooks():
+    client = get_gspread_client()
+    spreadsheet = client.open_by_url(st.secrets["results_sheet"]["spreadsheet_url"])
+    results_ws = spreadsheet.worksheet(st.secrets["results_sheet"]["results_worksheet"])
+    analytics_ws = spreadsheet.worksheet(st.secrets["results_sheet"]["analytics_worksheet"])
+    return results_ws, analytics_ws
+
+
+def ensure_sheet_headers():
+    results_ws, analytics_ws = get_results_workbooks()
+
+    if not results_ws.get_all_values():
+        results_ws.append_row([
+            "Name",
+            "Email",
+            "Role",
+            "Quiz Title",
+            "Score",
+            "Total",
+            "Percent",
+            "Timestamp",
+        ])
+
+    if not analytics_ws.get_all_values():
+        analytics_ws.append_row([
+            "Quiz Title",
+            "Email",
+            "Role",
+            "Question Number",
+            "Question",
+            "Selected Answer",
+            "Correct Answer",
+            "Is Correct",
+            "Timestamp",
+        ])
+
+
+def load_results_from_sheets():
+    ensure_sheet_headers()
+    results_ws, analytics_ws = get_results_workbooks()
+
+    results_records = results_ws.get_all_records()
+    analytics_records = analytics_ws.get_all_records()
+
+    results_df = pd.DataFrame(results_records)
+    analytics_df = pd.DataFrame(analytics_records)
+
+    return results_df, analytics_df
 
 
 # -----------------------------------
@@ -28,41 +91,40 @@ QUIZ_CATALOGUE_URL = "https://docs.google.com/spreadsheets/d/1M6QJOgDr5BYtsxpxLA
 # -----------------------------------
 def save_result(name, email, role, quiz_title, score, total):
     percent = round((score / total) * 100, 1) if total > 0 else 0
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
-    row = pd.DataFrame([{
-        "Name": name,
-        "Email": email,
-        "Role": role,
-        "Quiz Title": quiz_title,
-        "Score": score,
-        "Total": total,
-        "Percent": percent,
-        "Timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-    }])
+    ensure_sheet_headers()
+    results_ws, _ = get_results_workbooks()
 
-    if os.path.exists(RESULTS_FILE):
-        row.to_csv(RESULTS_FILE, mode="a", header=False, index=False)
-    else:
-        row.to_csv(RESULTS_FILE, index=False)
+    results_ws.append_row([
+        name,
+        email,
+        role,
+        quiz_title,
+        score,
+        total,
+        percent,
+        timestamp,
+    ])
 
 
 def save_question_analytics(quiz_title, email, role, q_num, question, selected, correct, is_correct):
-    row = pd.DataFrame([{
-        "Quiz Title": quiz_title,
-        "Email": email,
-        "Role": role,
-        "Question Number": q_num,
-        "Question": question,
-        "Selected Answer": selected,
-        "Correct Answer": correct,
-        "Is Correct": is_correct,
-        "Timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-    }])
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
-    if os.path.exists(ANALYTICS_FILE):
-        row.to_csv(ANALYTICS_FILE, mode="a", header=False, index=False)
-    else:
-        row.to_csv(ANALYTICS_FILE, index=False)
+    ensure_sheet_headers()
+    _, analytics_ws = get_results_workbooks()
+
+    analytics_ws.append_row([
+        quiz_title,
+        email,
+        role,
+        q_num,
+        question,
+        selected,
+        correct,
+        is_correct,
+        timestamp,
+    ])
 
 
 # -----------------------------------
@@ -71,32 +133,25 @@ def save_question_analytics(quiz_title, email, role, q_num, question, selected, 
 def convert_sheet_url(url):
     url = str(url).strip()
 
-    # If already correct
     if "export?format=csv" in url:
         return url
 
-    # Extract sheet ID
     if "/d/" in url:
         sheet_id = url.split("/d/")[1].split("/")[0]
     else:
         raise ValueError("Invalid Google Sheets URL")
 
-    # Extract gid if present
     gid = "0"
     if "gid=" in url:
         gid = url.split("gid=")[1].split("&")[0]
 
     return f"https://docs.google.com/spreadsheets/d/{sheet_id}/export?format=csv&gid={gid}"
 
+
 @st.cache_data(show_spinner=False)
 def load_google_sheet(sheet_url):
     csv_url = convert_sheet_url(sheet_url)
     return pd.read_csv(csv_url)
-
-
-@st.cache_data(show_spinner=False)
-def load_csv_file(uploaded_file):
-    return pd.read_csv(uploaded_file)
 
 
 def validate_quiz_df(df):
@@ -255,7 +310,6 @@ if catalogue_df.empty:
 st.subheader("Available quizzes")
 
 quiz_titles = catalogue_df["quiz_title"].tolist()
-quiz_title_to_id = dict(zip(catalogue_df["quiz_title"], catalogue_df["quiz_id"]))
 
 selected_quiz_title = st.selectbox(
     "Choose a quiz",
@@ -273,7 +327,6 @@ selected_quiz_id = selected_quiz_row["quiz_id"]
 youtube_url = str(selected_quiz_row["youtube_url"]).strip()
 question_sheet_url = str(selected_quiz_row["question_sheet_url"]).strip()
 
-# If switching quiz, clear old answers
 if st.session_state.get("selected_quiz_id") != selected_quiz_id:
     clear_question_state_only()
     st.session_state["selected_quiz_id"] = selected_quiz_id
@@ -289,6 +342,10 @@ if is_teacher_mode:
 
         if st.button("Reset current quiz"):
             reset_quiz_state()
+            st.rerun()
+
+        if st.button("Clear cache"):
+            st.cache_data.clear()
             st.rerun()
 
         st.divider()
@@ -423,11 +480,13 @@ if is_teacher_mode:
     st.divider()
     st.subheader("🏆 Leaderboard")
 
-    if os.path.exists(RESULTS_FILE):
-        results_df = pd.read_csv(RESULTS_FILE)
+    results_df, analytics_df = load_results_from_sheets()
+
+    if not results_df.empty:
         results_df = results_df[results_df["Quiz Title"] == selected_quiz_title].copy()
 
         if not results_df.empty:
+            results_df["Percent"] = pd.to_numeric(results_df["Percent"], errors="coerce")
             leaderboard = (
                 results_df
                 .sort_values(by=["Percent", "Timestamp"], ascending=[False, True])
@@ -437,7 +496,7 @@ if is_teacher_mode:
         else:
             st.info("No results yet for this quiz.")
     else:
-        st.info("No results file yet.")
+        st.info("No results yet.")
 
 # -----------------------------------
 # TEACHER DASHBOARD
@@ -446,20 +505,22 @@ if is_teacher_mode:
     st.divider()
     st.subheader("📊 Teacher Dashboard")
 
+    results_df, analytics_df = load_results_from_sheets()
+
     col1, col2 = st.columns(2)
 
     with col1:
-        if os.path.exists(RESULTS_FILE):
-            results_df = pd.read_csv(RESULTS_FILE)
-            results_df = results_df[results_df["Quiz Title"] == selected_quiz_title].copy()
+        st.write("### Results")
 
-            st.write("### Results")
+        if not results_df.empty:
+            filtered_results = results_df[results_df["Quiz Title"] == selected_quiz_title].copy()
 
-            if not results_df.empty:
-                st.dataframe(results_df, use_container_width=True)
-                st.metric("Average %", round(results_df["Percent"].mean(), 1))
+            if not filtered_results.empty:
+                filtered_results["Percent"] = pd.to_numeric(filtered_results["Percent"], errors="coerce")
+                st.dataframe(filtered_results, use_container_width=True)
+                st.metric("Average %", round(filtered_results["Percent"].mean(), 1))
 
-                results_csv = results_df.to_csv(index=False).encode("utf-8")
+                results_csv = filtered_results.to_csv(index=False).encode("utf-8")
                 st.download_button(
                     "Download results CSV",
                     data=results_csv,
@@ -468,17 +529,29 @@ if is_teacher_mode:
                 )
             else:
                 st.info("No results yet for this quiz.")
+        else:
+            st.info("No results sheet data yet.")
 
     with col2:
-        if os.path.exists(ANALYTICS_FILE):
-            analytics_df = pd.read_csv(ANALYTICS_FILE)
-            analytics_df = analytics_df[analytics_df["Quiz Title"] == selected_quiz_title].copy()
+        st.write("### Question Analysis")
 
-            st.write("### Question Analysis")
+        if not analytics_df.empty:
+            filtered_analytics = analytics_df[analytics_df["Quiz Title"] == selected_quiz_title].copy()
 
-            if not analytics_df.empty:
+            if not filtered_analytics.empty:
+                filtered_analytics["Is Correct"] = (
+                    filtered_analytics["Is Correct"]
+                    .astype(str)
+                    .str.lower()
+                    .isin(["true", "1", "yes"])
+                )
+
+                filtered_analytics["Question Number"] = pd.to_numeric(
+                    filtered_analytics["Question Number"], errors="coerce"
+                )
+
                 stats = (
-                    analytics_df.groupby(["Question Number", "Question"], as_index=False)
+                    filtered_analytics.groupby(["Question Number", "Question"], as_index=False)
                     .agg(
                         Attempts=("Is Correct", "count"),
                         Correct=("Is Correct", "sum")
@@ -499,3 +572,5 @@ if is_teacher_mode:
                 )
             else:
                 st.info("No analytics yet for this quiz.")
+        else:
+            st.info("No analytics sheet data yet.")
