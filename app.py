@@ -16,7 +16,7 @@ ANALYTICS_FILE = "question_analytics.csv"
 # -----------------------------------
 # Put your own email here if you want teacher dashboard access
 ADMIN_EMAILS = {
-    "james.p@sisb.com",
+    "james.p@sisbschool.com",
 }
 
 # Paste your quiz catalogue Google Sheet URL here
