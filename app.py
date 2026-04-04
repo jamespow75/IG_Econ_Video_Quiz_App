@@ -11,20 +11,28 @@ st.set_page_config(page_title="IG Econ Video Quizzes", layout="wide")
 RESULTS_FILE = "results.csv"
 ANALYTICS_FILE = "question_analytics.csv"
 
-# Add your teacher/admin email(s) here
+# -----------------------------------
+# CONFIG
+# -----------------------------------
+# Put your own email here if you want teacher dashboard access
 ADMIN_EMAILS = {
-    "yourname@sisb.ac.th",
+    "james.p@sisb.com",
 }
 
-# -----------------------------
-# Save functions
-# -----------------------------
-def save_result(name, email, quiz_title, score, total):
+# Paste your quiz catalogue Google Sheet URL here
+QUIZ_CATALOGUE_URL = "https://docs.google.com/spreadsheets/d/1M6QJOgDr5BYtsxpxLA-u1_RYRCugzlINQOUrVsTin-o/edit?usp=sharing"
+
+
+# -----------------------------------
+# SAVE FUNCTIONS
+# -----------------------------------
+def save_result(name, email, role, quiz_title, score, total):
     percent = round((score / total) * 100, 1) if total > 0 else 0
 
     row = pd.DataFrame([{
         "Name": name,
         "Email": email,
+        "Role": role,
         "Quiz Title": quiz_title,
         "Score": score,
         "Total": total,
@@ -38,10 +46,11 @@ def save_result(name, email, quiz_title, score, total):
         row.to_csv(RESULTS_FILE, index=False)
 
 
-def save_question_analytics(quiz_title, email, q_num, question, selected, correct, is_correct):
+def save_question_analytics(quiz_title, email, role, q_num, question, selected, correct, is_correct):
     row = pd.DataFrame([{
         "Quiz Title": quiz_title,
         "Email": email,
+        "Role": role,
         "Question Number": q_num,
         "Question": question,
         "Selected Answer": selected,
@@ -56,9 +65,47 @@ def save_question_analytics(quiz_title, email, q_num, question, selected, correc
         row.to_csv(ANALYTICS_FILE, index=False)
 
 
-# -----------------------------
-# Quiz helpers
-# -----------------------------
+# -----------------------------------
+# HELPERS
+# -----------------------------------
+def convert_sheet_url(url):
+    url = str(url).strip()
+
+    if "export?format=csv" in url:
+        return url
+
+    match = re.search(r"/spreadsheets/d/([a-zA-Z0-9-_]+)", url)
+    if not match:
+        raise ValueError("Invalid Google Sheets URL")
+
+    sheet_id = match.group(1)
+    gid_match = re.search(r"gid=([0-9]+)", url)
+    gid = gid_match.group(1) if gid_match else "0"
+
+    return f"https://docs.google.com/spreadsheets/d/{sheet_id}/export?format=csv&gid={gid}"
+
+
+@st.cache_data(show_spinner=False)
+def load_google_sheet(sheet_url):
+    csv_url = convert_sheet_url(sheet_url)
+    return pd.read_csv(csv_url)
+
+
+@st.cache_data(show_spinner=False)
+def load_csv_file(uploaded_file):
+    return pd.read_csv(uploaded_file)
+
+
+def validate_quiz_df(df):
+    required_cols = ["question", "option_a", "option_b", "option_c", "option_d", "correct_answer"]
+    return [col for col in required_cols if col not in df.columns]
+
+
+def validate_catalogue_df(df):
+    required_cols = ["quiz_id", "quiz_title", "youtube_url", "question_sheet_url", "visible"]
+    return [col for col in required_cols if col not in df.columns]
+
+
 def shuffle_question(row, seed):
     rng = random.Random(seed)
 
@@ -89,68 +136,59 @@ def make_correct_display(options_dict, correct_letter):
     return f"{correct_letter}. {options_dict[correct_letter]}"
 
 
-def validate_quiz_df(df):
-    required_cols = ["question", "option_a", "option_b", "option_c", "option_d", "correct_answer"]
-    return [col for col in required_cols if col not in df.columns]
-
-
-def convert_sheet_url(url):
-    url = url.strip()
-
-    if "export?format=csv" in url:
-        return url
-
-    match = re.search(r"/spreadsheets/d/([a-zA-Z0-9-_]+)", url)
-    if not match:
-        raise ValueError("Invalid Google Sheets URL")
-
-    sheet_id = match.group(1)
-    gid_match = re.search(r"gid=([0-9]+)", url)
-    gid = gid_match.group(1) if gid_match else "0"
-
-    return f"https://docs.google.com/spreadsheets/d/{sheet_id}/export?format=csv&gid={gid}"
-
-
-@st.cache_data(show_spinner=False)
-def load_csv_file(uploaded_file):
-    return pd.read_csv(uploaded_file)
-
-
-@st.cache_data(show_spinner=False)
-def load_google_sheet(sheet_url):
-    csv_url = convert_sheet_url(sheet_url)
-    return pd.read_csv(csv_url)
-
-
 def reset_quiz_state():
     keys_to_remove = [
         "submitted",
         "score",
         "total",
         "quiz_id",
+        "selected_quiz_id",
     ]
     for key in keys_to_remove:
         if key in st.session_state:
             del st.session_state[key]
 
+    question_keys = [k for k in st.session_state.keys() if k.startswith("q_")]
+    for key in question_keys:
+        del st.session_state[key]
 
-# -----------------------------
-# Login
-# -----------------------------
+
+def clear_question_state_only():
+    question_keys = [k for k in st.session_state.keys() if k.startswith("q_")]
+    for key in question_keys:
+        del st.session_state[key]
+
+    for key in ["submitted", "score", "total", "quiz_id"]:
+        if key in st.session_state:
+            del st.session_state[key]
+
+
+def parse_visible(value):
+    return str(value).strip().lower() in {"true", "1", "yes", "y"}
+
+
+# -----------------------------------
+# AUTH
+# -----------------------------------
+user_dict = st.user.to_dict()
+
+if "is_logged_in" not in user_dict:
+    st.error("Authentication is not configured correctly yet.")
+    st.stop()
+
 if not st.user.is_logged_in:
     st.title("🎓 IG Econ Video Quizzes")
     st.write("Please log in with Google to continue.")
-    if st.button("Login with Google"):
-        st.login()
+    st.button("Login with Google", on_click=st.login)
     st.stop()
 
 user = st.user
 name = getattr(user, "name", "Student")
 email = getattr(user, "email", "")
 
-# -----------------------------
-# Header
-# -----------------------------
+# -----------------------------------
+# HEADER
+# -----------------------------------
 st.title("🎓 IG Econ Video Quizzes")
 
 header_left, header_right = st.columns([5, 1])
@@ -164,84 +202,142 @@ with header_right:
 
 st.divider()
 
-# -----------------------------
-# Sidebar
-# -----------------------------
-with st.sidebar:
-    st.header("Quiz Settings")
+# -----------------------------------
+# ROLE SELECTION
+# -----------------------------------
+st.subheader("Choose your role")
 
-    quiz_title = st.text_input("Quiz title", "IG Econ Video Quiz")
+role = st.radio(
+    "Select role",
+    ["Student", "Teacher"],
+    horizontal=True,
+    key="role_selector",
+)
 
-    source = st.radio(
-        "Quiz source",
-        ["Upload CSV", "Google Sheets"],
-        index=0
-    )
+is_teacher_mode = role == "Teacher"
 
-    youtube_url = st.text_input("YouTube link")
+if is_teacher_mode and email not in ADMIN_EMAILS:
+    st.warning("Teacher mode is restricted.")
+    st.info("Your account is not listed in ADMIN_EMAILS in the app code.")
+    st.stop()
 
-    if st.button("Reset current quiz"):
-        reset_quiz_state()
-        st.rerun()
-
-# -----------------------------
-# Load quiz
-# -----------------------------
-df = None
+# -----------------------------------
+# LOAD QUIZ CATALOGUE
+# -----------------------------------
+if QUIZ_CATALOGUE_URL == "PASTE_YOUR_QUIZ_CATALOGUE_GOOGLE_SHEET_URL_HERE":
+    st.error("Please add your quiz catalogue Google Sheet URL to QUIZ_CATALOGUE_URL in app.py")
+    st.stop()
 
 try:
-    if source == "Upload CSV":
-        uploaded_file = st.file_uploader("Upload CSV", type=["csv"])
-        if uploaded_file is not None:
-            df = load_csv_file(uploaded_file)
-
-    elif source == "Google Sheets":
-        sheet_url = st.text_input("Paste Google Sheets link")
-        if sheet_url.strip():
-            df = load_google_sheet(sheet_url)
-
+    catalogue_df = load_google_sheet(QUIZ_CATALOGUE_URL)
 except Exception as e:
-    st.error(f"Could not load quiz: {e}")
+    st.error(f"Could not load quiz catalogue: {e}")
     st.stop()
 
-if df is None:
-    st.info("Upload a CSV or paste a Google Sheets link to begin.")
+missing_catalogue_cols = validate_catalogue_df(catalogue_df)
+if missing_catalogue_cols:
+    st.error(f"Quiz catalogue is missing columns: {', '.join(missing_catalogue_cols)}")
     st.stop()
 
-missing_cols = validate_quiz_df(df)
-if missing_cols:
-    st.error(f"Missing required columns: {', '.join(missing_cols)}")
+catalogue_df = catalogue_df.fillna("")
+catalogue_df = catalogue_df[catalogue_df["visible"].apply(parse_visible)].copy()
+
+if catalogue_df.empty:
+    st.warning("No visible quizzes found in the catalogue.")
     st.stop()
 
-df = df.fillna("")
+# -----------------------------------
+# QUIZ SELECTION
+# -----------------------------------
+st.subheader("Available quizzes")
 
-quiz_id = f"{quiz_title}|{len(df)}|{df.iloc[0]['question'] if len(df) > 0 else 'empty'}"
+quiz_titles = catalogue_df["quiz_title"].tolist()
+quiz_title_to_id = dict(zip(catalogue_df["quiz_title"], catalogue_df["quiz_id"]))
+
+selected_quiz_title = st.selectbox(
+    "Choose a quiz",
+    quiz_titles,
+    index=None,
+    placeholder="Select a quiz"
+)
+
+if selected_quiz_title is None:
+    st.info("Choose a quiz to begin.")
+    st.stop()
+
+selected_quiz_row = catalogue_df[catalogue_df["quiz_title"] == selected_quiz_title].iloc[0]
+selected_quiz_id = selected_quiz_row["quiz_id"]
+youtube_url = str(selected_quiz_row["youtube_url"]).strip()
+question_sheet_url = str(selected_quiz_row["question_sheet_url"]).strip()
+
+# If switching quiz, clear old answers
+if st.session_state.get("selected_quiz_id") != selected_quiz_id:
+    clear_question_state_only()
+    st.session_state["selected_quiz_id"] = selected_quiz_id
+
+# -----------------------------------
+# TEACHER INFO PANEL
+# -----------------------------------
+if is_teacher_mode:
+    with st.sidebar:
+        st.header("Teacher View")
+        st.write(f"**Quiz title:** {selected_quiz_title}")
+        st.write(f"**Quiz ID:** {selected_quiz_id}")
+
+        if st.button("Reset current quiz"):
+            reset_quiz_state()
+            st.rerun()
+
+        st.divider()
+        st.write("**Question sheet URL**")
+        st.caption(question_sheet_url)
+
+        st.write("**Video URL**")
+        st.caption(youtube_url if youtube_url else "No video link")
+
+# -----------------------------------
+# LOAD QUIZ QUESTIONS
+# -----------------------------------
+try:
+    quiz_df = load_google_sheet(question_sheet_url)
+except Exception as e:
+    st.error(f"Could not load quiz questions: {e}")
+    st.stop()
+
+missing_quiz_cols = validate_quiz_df(quiz_df)
+if missing_quiz_cols:
+    st.error(f"Quiz sheet is missing columns: {', '.join(missing_quiz_cols)}")
+    st.stop()
+
+quiz_df = quiz_df.fillna("")
+
+quiz_id = f"{selected_quiz_id}|{selected_quiz_title}|{len(quiz_df)}"
 if st.session_state.get("quiz_id") != quiz_id:
-    reset_quiz_state()
+    clear_question_state_only()
     st.session_state["quiz_id"] = quiz_id
 
-# -----------------------------
-# Video section
-# -----------------------------
+# -----------------------------------
+# VIDEO
+# -----------------------------------
+st.divider()
 st.subheader("🎬 Video")
 
-if youtube_url.strip():
+if youtube_url:
     st.video(youtube_url)
 else:
-    st.info("Add a YouTube link if you want students to watch a video before the quiz.")
+    st.info("No video link has been added for this quiz.")
 
+# -----------------------------------
+# QUIZ
+# -----------------------------------
 st.divider()
-
-# -----------------------------
-# Quiz section
-# -----------------------------
 st.subheader("📋 Quiz")
 
 answers = {}
 correct_answers = {}
 questions = {}
 
-for i, row in df.iterrows():
+for i, row in quiz_df.iterrows():
     shuffled_options, new_correct_letter = shuffle_question(row, seed=i)
     display_options = format_options(shuffled_options)
     correct_display = make_correct_display(shuffled_options, new_correct_letter)
@@ -249,6 +345,7 @@ for i, row in df.iterrows():
     selected = st.radio(
         f"{i + 1}. {row['question']}",
         display_options,
+        index=None,
         key=f"q_{i}"
     )
 
@@ -259,36 +356,43 @@ for i, row in df.iterrows():
 submit_clicked = st.button("Submit Quiz", disabled=st.session_state.get("submitted", False))
 
 if submit_clicked:
-    score = 0
-    total = len(df)
+    unanswered = [i + 1 for i, answer in answers.items() if answer is None]
 
-    for i in answers:
-        is_correct = answers[i] == correct_answers[i]
+    if unanswered:
+        st.error(f"Please answer all questions before submitting. Missing: {', '.join(map(str, unanswered))}")
+    else:
+        score = 0
+        total = len(quiz_df)
 
-        if is_correct:
-            score += 1
+        for i in answers:
+            is_correct = answers[i] == correct_answers[i]
 
-        save_question_analytics(
-            quiz_title=quiz_title,
+            if is_correct:
+                score += 1
+
+            save_question_analytics(
+                quiz_title=selected_quiz_title,
+                email=email,
+                role=role,
+                q_num=i + 1,
+                question=questions[i],
+                selected=answers[i],
+                correct=correct_answers[i],
+                is_correct=is_correct,
+            )
+
+        save_result(
+            name=name,
             email=email,
-            q_num=i + 1,
-            question=questions[i],
-            selected=answers[i],
-            correct=correct_answers[i],
-            is_correct=is_correct,
+            role=role,
+            quiz_title=selected_quiz_title,
+            score=score,
+            total=total,
         )
 
-    save_result(
-        name=name,
-        email=email,
-        quiz_title=quiz_title,
-        score=score,
-        total=total,
-    )
-
-    st.session_state["submitted"] = True
-    st.session_state["score"] = score
-    st.session_state["total"] = total
+        st.session_state["submitted"] = True
+        st.session_state["score"] = score
+        st.session_state["total"] = total
 
 if st.session_state.get("submitted", False):
     score = st.session_state["score"]
@@ -298,6 +402,10 @@ if st.session_state.get("submitted", False):
     st.success(f"🎯 Score: {score}/{total} ({percent}%)")
     st.info("Try again to improve your score.")
 
+    if st.button("Start this quiz again"):
+        clear_question_state_only()
+        st.rerun()
+
     with st.expander("Review answers"):
         for i in questions:
             st.write(f"**Q{i + 1}. {questions[i]}**")
@@ -305,16 +413,16 @@ if st.session_state.get("submitted", False):
             st.write(f"Correct answer: {correct_answers[i]}")
             st.write("---")
 
-# -----------------------------
-# Teacher-only leaderboard
-# -----------------------------
-if email in ADMIN_EMAILS:
+# -----------------------------------
+# TEACHER-ONLY LEADERBOARD
+# -----------------------------------
+if is_teacher_mode:
     st.divider()
     st.subheader("🏆 Leaderboard")
 
     if os.path.exists(RESULTS_FILE):
         results_df = pd.read_csv(RESULTS_FILE)
-        results_df = results_df[results_df["Quiz Title"] == quiz_title].copy()
+        results_df = results_df[results_df["Quiz Title"] == selected_quiz_title].copy()
 
         if not results_df.empty:
             leaderboard = (
@@ -328,10 +436,10 @@ if email in ADMIN_EMAILS:
     else:
         st.info("No results file yet.")
 
-# -----------------------------
-# Teacher dashboard
-# -----------------------------
-if email in ADMIN_EMAILS:
+# -----------------------------------
+# TEACHER DASHBOARD
+# -----------------------------------
+if is_teacher_mode:
     st.divider()
     st.subheader("📊 Teacher Dashboard")
 
@@ -340,7 +448,7 @@ if email in ADMIN_EMAILS:
     with col1:
         if os.path.exists(RESULTS_FILE):
             results_df = pd.read_csv(RESULTS_FILE)
-            results_df = results_df[results_df["Quiz Title"] == quiz_title].copy()
+            results_df = results_df[results_df["Quiz Title"] == selected_quiz_title].copy()
 
             st.write("### Results")
 
@@ -352,7 +460,7 @@ if email in ADMIN_EMAILS:
                 st.download_button(
                     "Download results CSV",
                     data=results_csv,
-                    file_name=f"{quiz_title}_results.csv",
+                    file_name=f"{selected_quiz_title}_results.csv",
                     mime="text/csv"
                 )
             else:
@@ -361,7 +469,7 @@ if email in ADMIN_EMAILS:
     with col2:
         if os.path.exists(ANALYTICS_FILE):
             analytics_df = pd.read_csv(ANALYTICS_FILE)
-            analytics_df = analytics_df[analytics_df["Quiz Title"] == quiz_title].copy()
+            analytics_df = analytics_df[analytics_df["Quiz Title"] == selected_quiz_title].copy()
 
             st.write("### Question Analysis")
 
@@ -383,7 +491,7 @@ if email in ADMIN_EMAILS:
                 st.download_button(
                     "Download question analysis CSV",
                     data=analytics_csv,
-                    file_name=f"{quiz_title}_question_analysis.csv",
+                    file_name=f"{selected_quiz_title}_question_analysis.csv",
                     mime="text/csv"
                 )
             else:
