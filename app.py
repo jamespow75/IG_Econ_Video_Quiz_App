@@ -301,10 +301,19 @@ if is_teacher_mode:
 # -----------------------------------
 # LOAD QUIZ QUESTIONS
 # -----------------------------------
+st.write("DEBUG: Raw question sheet URL from catalogue:")
+st.code(question_sheet_url)
+
 try:
-    quiz_df = load_google_sheet(question_sheet_url)
+    converted_question_url = convert_sheet_url(question_sheet_url)
+    st.write("DEBUG: Converted CSV URL:")
+    st.code(converted_question_url)
+
+    quiz_df = pd.read_csv(converted_question_url)
 except Exception as e:
-    st.error(f"Could not load quiz questions: {e}")
+    st.error("Could not load quiz questions.")
+    st.write("DEBUG ERROR:")
+    st.write(e)
     st.stop()
 
 missing_quiz_cols = validate_quiz_df(quiz_df)
