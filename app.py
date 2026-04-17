@@ -61,11 +61,11 @@ def get_results_workbooks():
 def save_result(name, email, role, quiz_title, score, total):
     ws, _ = get_results_workbooks()
     percent = round((score / total) * 100, 1)
-    ws.append_row([name, email, role, quiz_title, score, total, percent, datetime.now()])
+    ws.append_row([name, email, role, quiz_title, score, total, percent, datetime.now().strftime("%Y-%m-%d %H:%M:%S")])
 
 def save_question_analytics(quiz_title, email, role, q_num, question, selected, correct, is_correct):
     _, ws = get_results_workbooks()
-    ws.append_row([quiz_title, email, role, q_num, question, selected, correct, is_correct, datetime.now()])
+    ws.append_row([quiz_title, email, role, q_num, question, selected, correct, is_correct, datetime.now().strftime("%Y-%m-%d %H:%M:%S")])
 
 # -----------------------------------
 # HELPERS
