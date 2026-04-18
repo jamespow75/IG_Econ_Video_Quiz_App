@@ -27,7 +27,7 @@ st.markdown(
     --pow-error: #C62828;
 }
 
-html, body, [class*="css"]  {
+html, body, [class*="css"] {
     font-family: 'Open Sans', sans-serif;
 }
 
@@ -521,14 +521,17 @@ def get_user_topic_progress(results_df: pd.DataFrame, catalogue_df: pd.DataFrame
 
 
 def build_quiz_attempt_data(quiz_df: pd.DataFrame, quiz_seed: int):
-    rng = random.Random(quiz_seed)
+    # Keep original question order
     question_order = list(range(len(quiz_df)))
-    rng.shuffle(question_order)
 
+    # Shuffle only answer options
     option_map = {}
     for position, original_index in enumerate(question_order):
         row = quiz_df.iloc[original_index]
-        shuffled_options, correct_letter = shuffle_options(row, seed=quiz_seed + original_index + position)
+        shuffled_options, correct_letter = shuffle_options(
+            row,
+            seed=quiz_seed + original_index + position
+        )
         option_map[position] = {
             "options": shuffled_options,
             "correct_letter": correct_letter,
@@ -724,7 +727,7 @@ except Exception as e:
 # INITIALISE ATTEMPT
 # -----------------------------------
 if "quiz_seed" not in st.session_state:
-    st.session_state.quiz_seed = random.randint(100000, 999999)
+    st.session_state.quiz_seed = random.SystemRandom().randint(100000, 999999)
 
 if "question_order" not in st.session_state or "question_option_map" not in st.session_state:
     question_order, option_map = build_quiz_attempt_data(quiz_df, st.session_state.quiz_seed)
