@@ -51,7 +51,7 @@ h1, h2, h3, h4, .pow-heading, .pow-topic-title, .pow-quiz-title, .pow-question {
 }
 
 .pow-hero h1 {
-    margin: 0;convert
+    margin: 0;
     font-size: 2rem;
     font-weight: 700;
     color: white;
@@ -315,6 +315,9 @@ def get_results_workbooks():
 
 
 def ensure_sheet_headers():
+    if st.session_state.get("results_headers_checked", False):
+        return
+
     results_ws, analytics_ws = get_results_workbooks()
 
     results_values = results_ws.get_all_values()
@@ -333,6 +336,8 @@ def ensure_sheet_headers():
         if analytics_values[0] != ANALYTICS_HEADERS:
             analytics_ws.clear()
             analytics_ws.append_row(ANALYTICS_HEADERS)
+
+    st.session_state["results_headers_checked"] = True
 
 
 def worksheet_to_df(ws, headers):
@@ -359,14 +364,17 @@ def worksheet_to_df(ws, headers):
     return pd.DataFrame(cleaned_rows, columns=headers)
 
 
-def load_results_from_sheets():
-    ensure_sheet_headers()
+@st.cache_data(ttl=60, show_spinner=False)
+def load_results_from_sheets_cached():
     results_ws, analytics_ws = get_results_workbooks()
-
     results_df = worksheet_to_df(results_ws, RESULTS_HEADERS)
     analytics_df = worksheet_to_df(analytics_ws, ANALYTICS_HEADERS)
-
     return results_df, analytics_df
+
+
+def load_results_from_sheets():
+    ensure_sheet_headers()
+    return load_results_from_sheets_cached()
 
 
 def save_result(name, email, role, quiz_title, score, total):
@@ -386,6 +394,8 @@ def save_result(name, email, role, quiz_title, score, total):
         timestamp,
     ])
 
+    load_results_from_sheets_cached.clear()
+
 
 def save_question_analytics(quiz_title, email, role, q_num, question, selected, correct, is_correct):
     ensure_sheet_headers()
@@ -404,6 +414,8 @@ def save_question_analytics(quiz_title, email, role, q_num, question, selected, 
         timestamp,
     ])
 
+    load_results_from_sheets_cached.clear()
+
 
 # -----------------------------------
 # HELPERS
@@ -411,18 +423,15 @@ def save_question_analytics(quiz_title, email, role, q_num, question, selected, 
 def convert_sheet_url(url: str) -> str:
     url = str(url).strip()
 
-    # If already CSV export, use it
     if "export?format=csv" in url:
         return url
 
-    # Extract spreadsheet ID
     if "/d/" not in url:
         raise ValueError("Invalid Google Sheets URL")
 
     sheet_id = url.split("/d/")[1].split("/")[0]
-
-    # Always use first sheet (no gid)
     return f"https://docs.google.com/spreadsheets/d/{sheet_id}/export?format=csv"
+
 
 @st.cache_data(show_spinner=False)
 def load_google_sheet(sheet_url: str) -> pd.DataFrame:
@@ -520,10 +529,8 @@ def get_user_topic_progress(results_df: pd.DataFrame, catalogue_df: pd.DataFrame
 
 
 def build_quiz_attempt_data(quiz_df: pd.DataFrame, quiz_seed: int):
-    # Keep original question order
     question_order = list(range(len(quiz_df)))
 
-    # Shuffle only answer options
     option_map = {}
     for position, original_index in enumerate(question_order):
         row = quiz_df.iloc[original_index]
@@ -607,7 +614,7 @@ if is_teacher_mode and email not in ADMIN_EMAILS:
     st.stop()
 
 # -----------------------------------
-# LOAD DATA
+# LOAD CATALOGUE
 # -----------------------------------
 try:
     catalogue_df = load_google_sheet(QUIZ_CATALOGUE_URL)
@@ -616,13 +623,18 @@ except Exception as e:
     st.error(f"Could not load quiz catalogue: {e}")
     st.stop()
 
-try:
-    results_df, analytics_df = load_results_from_sheets()
-except Exception as e:
-    st.error(f"Could not load results sheets: {e}")
-    st.stop()
+# Only load results when needed
+results_df = pd.DataFrame(columns=RESULTS_HEADERS)
+analytics_df = pd.DataFrame(columns=ANALYTICS_HEADERS)
+topic_progress = {topic: (0, len(catalogue_df[catalogue_df["topic"] == topic])) for topic in TOPIC_ORDER}
 
-topic_progress = get_user_topic_progress(results_df, catalogue_df, email)
+if not st.session_state.get("selected_quiz_title") or is_teacher_mode:
+    try:
+        results_df, analytics_df = load_results_from_sheets()
+        topic_progress = get_user_topic_progress(results_df, catalogue_df, email)
+    except Exception as e:
+        st.error(f"Could not load results sheets: {e}")
+        st.stop()
 
 # -----------------------------------
 # SIDEBAR
@@ -641,6 +653,7 @@ with st.sidebar:
 
     if st.button("Clear data cache", use_container_width=True):
         st.cache_data.clear()
+        load_results_from_sheets_cached.clear()
         st.rerun()
 
     if is_teacher_mode and st.session_state.get("selected_quiz_title"):
@@ -819,6 +832,8 @@ if not st.session_state.quiz_complete:
 
     if clicked and not st.session_state.answered_current:
         is_correct = clicked == correct_letter
+        explanation = str(row["explanation"]).strip() if "explanation" in row.index else ""
+
         st.session_state.answered_current = True
         st.session_state.current_feedback = {
             "selected": clicked,
@@ -826,6 +841,7 @@ if not st.session_state.quiz_complete:
             "is_correct": is_correct,
             "correct_text": options[correct_letter],
             "question_text": row["question"],
+            "explanation": explanation,
         }
 
         if is_correct:
@@ -852,6 +868,9 @@ if not st.session_state.quiz_complete:
                 f"<div class='pow-feedback-bad'>Correct answer: {feedback['correct']}. {feedback['correct_text']}</div>",
                 unsafe_allow_html=True,
             )
+
+        if feedback.get("explanation"):
+            st.info(feedback["explanation"])
 
         st.markdown("<br>", unsafe_allow_html=True)
 
@@ -903,6 +922,12 @@ if st.session_state.quiz_complete:
 # TEACHER DASHBOARD
 # -----------------------------------
 if is_teacher_mode:
+    try:
+        results_df, analytics_df = load_results_from_sheets()
+    except Exception as e:
+        st.error(f"Could not load teacher dashboard data: {e}")
+        st.stop()
+
     st.markdown("<div class='pow-divider'></div>", unsafe_allow_html=True)
     st.markdown("<div class='pow-section-title'>Teacher Dashboard</div>", unsafe_allow_html=True)
 
