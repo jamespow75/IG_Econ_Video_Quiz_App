@@ -51,7 +51,7 @@ h1, h2, h3, h4, .pow-heading, .pow-topic-title, .pow-quiz-title, .pow-question {
 }
 
 .pow-hero h1 {
-    margin: 0;
+    margin: 0;convert
     font-size: 2rem;
     font-weight: 700;
     color: white;
@@ -411,19 +411,18 @@ def save_question_analytics(quiz_title, email, role, q_num, question, selected, 
 def convert_sheet_url(url: str) -> str:
     url = str(url).strip()
 
+    # If already CSV export, use it
     if "export?format=csv" in url:
         return url
 
+    # Extract spreadsheet ID
     if "/d/" not in url:
         raise ValueError("Invalid Google Sheets URL")
 
     sheet_id = url.split("/d/")[1].split("/")[0]
-    gid = "0"
-    if "gid=" in url:
-        gid = url.split("gid=")[1].split("&")[0]
 
-    return f"https://docs.google.com/spreadsheets/d/{sheet_id}/export?format=csv&gid={gid}"
-
+    # Always use first sheet (no gid)
+    return f"https://docs.google.com/spreadsheets/d/{sheet_id}/export?format=csv"
 
 @st.cache_data(show_spinner=False)
 def load_google_sheet(sheet_url: str) -> pd.DataFrame:
