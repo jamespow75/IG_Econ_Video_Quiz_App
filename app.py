@@ -41,10 +41,6 @@ h1, h2, h3, h4, .pow-heading, .pow-topic-title, .pow-quiz-title, .pow-question {
     padding-bottom: 3rem;
 }
 
-div[data-testid="stVerticalBlock"] > div:has(.pow-hero) {
-    margin-bottom: 1rem;
-}
-
 .pow-hero {
     background: linear-gradient(135deg, var(--pow-navy) 0%, #243C68 100%);
     color: white;
@@ -247,10 +243,6 @@ div[data-testid="stButton"] > button:hover {
     font-size: 0.92rem;
 }
 
-.pow-top-actions {
-    margin-top: 0.75rem;
-}
-
 [data-testid="stSidebar"] {
     background: #FBFBFC;
 }
@@ -272,6 +264,29 @@ TOPIC_ORDER = [
     "4. Government & The Macroeconomy",
     "5. Economic Development",
     "6. International Trade & Globalisation",
+]
+
+RESULTS_HEADERS = [
+    "Name",
+    "Email",
+    "Role",
+    "Quiz Title",
+    "Score",
+    "Total",
+    "Percent",
+    "Timestamp",
+]
+
+ANALYTICS_HEADERS = [
+    "Quiz Title",
+    "Email",
+    "Role",
+    "Question Number",
+    "Question",
+    "Selected Answer",
+    "Correct Answer",
+    "Is Correct",
+    "Timestamp",
 ]
 
 # -----------------------------------
@@ -302,41 +317,54 @@ def get_results_workbooks():
 def ensure_sheet_headers():
     results_ws, analytics_ws = get_results_workbooks()
 
-    if not results_ws.get_all_values():
-        results_ws.append_row([
-            "Name",
-            "Email",
-            "Role",
-            "Quiz Title",
-            "Score",
-            "Total",
-            "Percent",
-            "Timestamp",
-        ])
+    results_values = results_ws.get_all_values()
+    analytics_values = analytics_ws.get_all_values()
 
-    if not analytics_ws.get_all_values():
-        analytics_ws.append_row([
-            "Quiz Title",
-            "Email",
-            "Role",
-            "Question Number",
-            "Question",
-            "Selected Answer",
-            "Correct Answer",
-            "Is Correct",
-            "Timestamp",
-        ])
+    if not results_values:
+        results_ws.append_row(RESULTS_HEADERS)
+    else:
+        if results_values[0] != RESULTS_HEADERS:
+            results_ws.clear()
+            results_ws.append_row(RESULTS_HEADERS)
+
+    if not analytics_values:
+        analytics_ws.append_row(ANALYTICS_HEADERS)
+    else:
+        if analytics_values[0] != ANALYTICS_HEADERS:
+            analytics_ws.clear()
+            analytics_ws.append_row(ANALYTICS_HEADERS)
+
+
+def worksheet_to_df(ws, headers):
+    values = ws.get_all_values()
+
+    if not values:
+        return pd.DataFrame(columns=headers)
+
+    if values[0] != headers:
+        return pd.DataFrame(columns=headers)
+
+    data_rows = values[1:]
+    if not data_rows:
+        return pd.DataFrame(columns=headers)
+
+    cleaned_rows = []
+    for row in data_rows:
+        if len(row) < len(headers):
+            row = row + [""] * (len(headers) - len(row))
+        elif len(row) > len(headers):
+            row = row[:len(headers)]
+        cleaned_rows.append(row)
+
+    return pd.DataFrame(cleaned_rows, columns=headers)
 
 
 def load_results_from_sheets():
     ensure_sheet_headers()
     results_ws, analytics_ws = get_results_workbooks()
 
-    results_records = results_ws.get_all_records()
-    analytics_records = analytics_ws.get_all_records()
-
-    results_df = pd.DataFrame(results_records)
-    analytics_df = pd.DataFrame(analytics_records)
+    results_df = worksheet_to_df(results_ws, RESULTS_HEADERS)
+    analytics_df = worksheet_to_df(analytics_ws, ANALYTICS_HEADERS)
 
     return results_df, analytics_df
 
@@ -409,20 +437,17 @@ def visible(value) -> bool:
 
 def normalise_catalogue(df: pd.DataFrame) -> pd.DataFrame:
     df = df.fillna("").copy()
+
     if "visible" in df.columns:
         df = df[df["visible"].apply(visible)].copy()
 
     if "topic" not in df.columns:
         df["topic"] = ""
 
-    if "quiz_id" not in df.columns:
-        raise ValueError("Catalogue sheet must include a 'quiz_id' column.")
-    if "quiz_title" not in df.columns:
-        raise ValueError("Catalogue sheet must include a 'quiz_title' column.")
-    if "youtube_url" not in df.columns:
-        raise ValueError("Catalogue sheet must include a 'youtube_url' column.")
-    if "question_sheet_url" not in df.columns:
-        raise ValueError("Catalogue sheet must include a 'question_sheet_url' column.")
+    required_cols = ["quiz_id", "quiz_title", "youtube_url", "question_sheet_url"]
+    missing = [c for c in required_cols if c not in df.columns]
+    if missing:
+        raise ValueError(f"Catalogue sheet is missing columns: {', '.join(missing)}")
 
     return df
 
@@ -455,7 +480,6 @@ def shuffle_options(row: pd.Series, seed: int):
 
 def reset_quiz_state(full_library_reset: bool = False):
     keys = [
-        "quiz_started",
         "selected_quiz_id",
         "selected_quiz_title",
         "question_order",
@@ -599,7 +623,7 @@ except Exception as e:
 topic_progress = get_user_topic_progress(results_df, catalogue_df, email)
 
 # -----------------------------------
-# SIDEBAR / TEACHER UTILITIES
+# SIDEBAR
 # -----------------------------------
 with st.sidebar:
     st.markdown("### Pow WOW Learning")
