@@ -265,7 +265,11 @@ RESULTS_SHEETS = {
     "A Level Economics":{"NR":"ALevel_Results_NR","PU":"ALevel_Results_PU","TR":"ALevel_Results_TR","CM":"ALevel_Results_CM"},
 }
 
-RESULTS_HEADERS = ["Name","Email","Course","Campus","Class","Quiz Title","Score","Total","Percent","Timestamp"]
+RESULTS_HEADERS = [
+    "Timestamp", "Nickname", "Full Name", "Email", "Campus", "Class",
+    "Year Group", "Course", "Quiz ID", "Topic", "Quiz Title",
+    "Score", "Total", "Percentage",
+]
 
 QUIZ_REQUIRED_COLUMNS = ["question","option_a","option_b","option_c","option_d","correct_answer"]
 
@@ -279,10 +283,12 @@ defaults = {
     "quiz_df": None,
     "quiz_title": None,
     "quiz_youtube_url": None,
+    "quiz_id": None,
+    "quiz_topic": None,
     "shuffled_options": {},
     "saved_result": False,
-    "answered": False,       # True once the student has clicked an answer
-    "clicked_letter": None,  # Which letter they clicked
+    "answered": False,
+    "clicked_letter": None,
 }
 for k, v in defaults.items():
     if k not in st.session_state:
@@ -314,16 +320,28 @@ def ensure_headers(ws):
         ws.append_row(RESULTS_HEADERS)
 
 
-def save_result(name, email, course, campus, student_class, quiz_title, score, total):
+def save_result(nickname, full_name, email, course, campus, student_class,
+                year_group, quiz_id, topic, quiz_title, score, total):
     spreadsheet = get_results_spreadsheet()
     sheet_name = RESULTS_SHEETS[course][campus]
     ws = spreadsheet.worksheet(sheet_name)
     ensure_headers(ws)
     percent = round((score / total) * 100, 1)
     ws.append_row([
-        name, email, course, campus, student_class, quiz_title,
-        score, total, percent,
-        datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        datetime.now().strftime("%d/%m/%Y %H:%M:%S"),
+        nickname,
+        full_name,
+        email,
+        campus,
+        student_class,
+        year_group,
+        course,
+        quiz_id,
+        topic,
+        quiz_title,
+        score,
+        total,
+        percent,
     ])
 
 # -----------------------------------
@@ -381,6 +399,8 @@ def reset_quiz():
     st.session_state.quiz_df = None
     st.session_state.quiz_title = None
     st.session_state.quiz_youtube_url = None
+    st.session_state.quiz_id = None
+    st.session_state.quiz_topic = None
     st.session_state.shuffled_options = {}
     st.session_state.saved_result = False
     st.session_state.answered = False
@@ -408,9 +428,13 @@ st.markdown(
 # -----------------------------------
 col1, col2 = st.columns(2)
 with col1:
-    name = st.text_input("Full name")
+    nickname = st.text_input("Nickname (e.g. Moohin, Sand)")
 with col2:
-    email = st.text_input("Email address")
+    full_name = st.text_input("Full name")
+
+col_email, _ = st.columns([2, 1])
+with col_email:
+    email = st.text_input("School email address")
 
 col3, col4, col5 = st.columns(3)
 with col3:
@@ -420,8 +444,19 @@ with col4:
 with col5:
     student_class = st.selectbox("Class", CAMPUS_CLASSES[campus])
 
-if not name or not email:
-    st.info("Enter your name and email above to get started.")
+# Derive year group from class and course
+def get_year_group(cls, crs):
+    grade_num = ''.join(filter(str.isdigit, cls[:4]))
+    if "IGCSE" in crs:
+        return "IGCSE Year 1" if grade_num in ("9", "11") else "IGCSE Year 2"
+    elif "A Level" in crs:
+        return "A Level Year 1" if grade_num in ("11",) else "A Level Year 2"
+    return f"Grade {grade_num}"
+
+year_group = get_year_group(student_class, course)
+
+if not nickname or not full_name or not email:
+    st.info("Please enter your nickname, full name, and school email to get started.")
     st.stop()
 
 st.markdown('<hr class="pow-divider">', unsafe_allow_html=True)
@@ -476,6 +511,8 @@ if not st.session_state.quiz_started:
                     st.session_state.quiz_df          = quiz_df
                     st.session_state.quiz_title        = title
                     st.session_state.quiz_youtube_url  = yt_url
+                    st.session_state.quiz_id           = quiz_id
+                    st.session_state.quiz_topic        = unit
                     st.session_state.quiz_started      = True
                     st.session_state.current_q         = 0
                     st.session_state.score             = 0
@@ -501,8 +538,20 @@ youtube_url = st.session_state.quiz_youtube_url
 if current_q >= len(quiz_df):
 
     if not st.session_state.saved_result:
-        save_result(name, email, course, campus, student_class,
-                    st.session_state.quiz_title, score, len(quiz_df))
+        save_result(
+            nickname,
+            full_name,
+            email,
+            course,
+            campus,
+            student_class,
+            year_group,
+            st.session_state.quiz_id,
+            st.session_state.quiz_topic,
+            st.session_state.quiz_title,
+            score,
+            len(quiz_df),
+        )
         st.session_state.saved_result = True
 
     percent = round((score / len(quiz_df)) * 100, 1)
